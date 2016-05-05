@@ -36,7 +36,6 @@ pieces = {
 class Game(object):
     def __init__(self):
         self.board = np.ndarray(shape=(3, 3))
-        self.board.fill(E)
         self.reset()
 
     def check_win(self):
