@@ -16,8 +16,10 @@
 # You should have received a copy of the GNU General Public License
 # along with TicTacToe. If not, see <http://www.gnu.org/licenses/>.
 import math
+import select
+import struct
+import socket
 
-import numpy as np
 import pyglet
 from pyglet.gl import *
 
@@ -32,57 +34,67 @@ pieces = {
     X: "X"
 }
 
+BUFFER = 4096
+STATE = struct.Struct('!bbb9b')
+PLACE = struct.Struct('!2b')
+PSIZE = struct.Struct('!B')
+
 
 class Game(object):
     def __init__(self):
-        self.board = np.ndarray(shape=(3, 3))
-        self.reset()
+        self.win = None
+        self.turn = X
+        self.board = [[E, E, E], [E, E, E], [E, E, E]]
+        self.piece = E
 
-    def check_win(self):
-        for row in self.board:
-            if sum(row) == X * 3:
-                return X
-            elif sum(row) == O * 3:
-                return O
-        for col in self.board.T:
-            if sum(col) == X * 3:
-                return X
-            elif sum(col) == O * 3:
-                return O
-        if sum(np.diagonal(self.board)) == X * 3:
-            return X
-        if sum(np.diagonal(self.board)) == O * 3:
-            return O
-        if sum(np.diagonal(self.board[:, ::-1])) == X * 3:
-            return X
-        if sum(np.diagonal(self.board[:, ::-1])) == O * 3:
-            return O
-        if E not in self.board:
-            return E
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect(('127.0.0.1', 420))
+        self.update()
 
     def state(self):
         if self.win:
             return "{winner} wins!".format(winner=pieces[self.win])
         elif self.win == 0:
             return "It's a draw!"
+        elif self.turn == self.piece:
+            return "It's your turn"
         else:
             return "It's {piece}'s turn".format(piece=pieces[self.turn])
 
-    def place_tile(self, x, y):
-        if self.board[x, y] != E:
-            return
-        if self.win is not None:
-            return
-        self.board[x, y] = self.turn
-        self.turn = -self.turn
-        self.win = self.check_win()
-        if self.win is not None:
-            pyglet.clock.schedule_once(self.reset, 1)
+    def update(self, dt=0):
+        read, write, errors = select.select([self.sock], [], [], 0)
+        for sock in read:
+            if sock == self.sock:
+                data = self.sock.recv(12)
+                state = STATE.unpack(data)
+                self.turn = state[0]
+                self.piece = state[1]
+                self.win = None if state[2] == 2 else state[2]
+                self.board = [state[3:][x:x + 3] for x in range(0, len(state[3:]), 3)]
+                print("I am {piece}".format(piece=pieces[self.piece]))
 
-    def reset(self, dt=0):
-        self.board.fill(E)
-        self.turn = X
-        self.win = None
+    def place_tile(self, x, y):
+        if self.board[x][y] != E:
+            return
+        if self.win is not None:
+            return
+        if self.turn != self.piece:
+            return
+        self.sock.send(PLACE.pack(x, y))
+        # if self.board[x, y] != E:
+        #     return
+        # if self.win is not None:
+        #     return
+        # self.board[x, y] = self.turn
+        # self.turn = -self.turn
+        # self.win = self.check_win()
+        # if self.win is not None:
+        #     pyglet.clock.schedule_once(self.reset, 1)
+
+    # def reset(self, dt=0):
+    #     self.board.fill(E)
+    #     self.turn = X
+    #     self.win = None
 
 
 class MainWindow(pyglet.window.Window):
@@ -112,14 +124,14 @@ class MainWindow(pyglet.window.Window):
 
         self.draw_board()
 
+        board = list(zip(*game.board[::-1]))
         for x in range(3):
             for y in range(3):
                 glPushMatrix()
                 glTranslatef(((self.width / 3) * (x - 1)), ((self.height / 3) * (y - 1)), 0.0)
-                board = np.rot90(game.board, 3)
-                if board[x, y] == X:
+                if board[x][y] == X:
                     self.draw_x()
-                elif board[x, y] == O:
+                elif board[x][y] == O:
                     self.draw_o()
                 glPopMatrix()
 
@@ -171,4 +183,5 @@ if __name__ == "__main__":
     game = Game()
     config = pyglet.gl.Config(samples=4)
     window = MainWindow(config=config, resizable=True)
+    pyglet.clock.schedule_interval(game.update, 1 / 30)
     pyglet.app.run()
